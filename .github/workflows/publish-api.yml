@@ -1,0 +1,98 @@
+name: Publish API client
+
+# Reusable workflow (getout pattern): generate the typed client from the server's
+# released OpenAPI spec and publish @barbu-game/barbu-api to GitHub Packages.
+# Called by barbu-server's release workflow, which uploads the spec as an artifact.
+#
+# Self-contained on purpose: it scaffolds the package inline rather than checking
+# out this repo, so it works even when every repo in the org is private (the
+# caller's GITHUB_TOKEN cannot read a different private repo).
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Version to publish (no leading v).
+        required: true
+        type: string
+      spec-artifact:
+        description: Name of the uploaded OpenAPI spec artifact.
+        required: false
+        default: openapi-spec
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the released OpenAPI spec
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.spec-artifact }}
+          path: spec
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://npm.pkg.github.com
+          scope: '@barbu-game'
+
+      - name: Scaffold the package
+        run: |
+          cat > package.json <<'JSON'
+          {
+            "name": "@barbu-game/barbu-api",
+            "version": "${{ inputs.version }}",
+            "description": "Generated TypeScript client and DTOs for the Barbu API (code-first OpenAPI).",
+            "type": "module",
+            "main": "dist/index.js",
+            "types": "dist/index.d.ts",
+            "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+            "files": ["dist"],
+            "publishConfig": { "registry": "https://npm.pkg.github.com" },
+            "repository": { "type": "git", "url": "git+https://github.com/barbu-game/barbu-server.git" },
+            "license": "UNLICENSED",
+            "devDependencies": { "orval": "^8.15.0", "typescript": "^5" }
+          }
+          JSON
+          cat > orval.config.ts <<'TS'
+          import { defineConfig } from "orval";
+          // Mirrors barbu-web's former local config so the published client is
+          // byte-for-byte what the app used to generate locally.
+          export default defineConfig({
+            barbu: {
+              input: "./spec/openapi.yml",
+              output: { target: "./src/index.ts", client: "fetch", mode: "single", clean: true },
+            },
+          });
+          TS
+          cat > tsconfig.json <<'JSON'
+          {
+            "compilerOptions": {
+              "target": "ES2020",
+              "module": "ESNext",
+              "moduleResolution": "Bundler",
+              "lib": ["ES2020", "DOM"],
+              "declaration": true,
+              "outDir": "dist",
+              "rootDir": "src",
+              "strict": true,
+              "skipLibCheck": true
+            },
+            "include": ["src"]
+          }
+          JSON
+
+      - name: Generate and build the client
+        run: |
+          npm install
+          npx orval --config orval.config.ts
+          npx tsc -p tsconfig.json
+
+      - name: Publish to GitHub Packages
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

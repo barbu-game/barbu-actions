@@ -1,0 +1,9 @@
+node_modules/
+# Scaffold + build artifacts are generated in CI, never committed.
+spec/
+src/
+dist/
+package.json
+package-lock.json
+orval.config.ts
+tsconfig.json
