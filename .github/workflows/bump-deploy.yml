@@ -1,0 +1,60 @@
+name: Bump deploy
+
+# Reusable workflow (getout/GitOps): after an image is published, point the matching
+# barbu-deploy chart at the new version and push to main so ArgoCD rolls it out. This is the
+# last brick of zero-touch deploys — no manual chart edits per release.
+#
+# Requires a DEPLOY_BUMP_TOKEN secret (PAT with contents:write on barbu-deploy), passed by the
+# caller via `secrets: inherit`.
+on:
+  workflow_call:
+    inputs:
+      chart:
+        description: Chart directory under barbu-deploy (e.g. charts/barbu-web).
+        required: true
+        type: string
+      version:
+        description: New image version to pin (no leading v).
+        required: true
+        type: string
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: bump-deploy-main
+      cancel-in-progress: false
+    steps:
+      - name: Checkout barbu-deploy
+        uses: actions/checkout@v6
+        with:
+          repository: barbu-game/barbu-deploy
+          token: ${{ secrets.DEPLOY_BUMP_TOKEN }}
+          ref: main
+          fetch-depth: 0
+
+      - name: Pin the new image tag and push
+        env:
+          CHART: ${{ inputs.chart }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          file="$CHART/values.yaml"
+          sed -i -E "s|^([[:space:]]*)tag:.*$|\1tag: \"$VERSION\" # bumped by the release pipeline|" "$file"
+          if git diff --quiet -- "$file"; then
+            echo "No change; $CHART already at $VERSION."
+            exit 0
+          fi
+          git config user.name "Lucas Laurent"
+          git config user.email "114945778+kour0@users.noreply.github.com"
+          git commit -am "chore: deploy $CHART $VERSION"
+          # Another release may push concurrently; rebase and retry before giving up.
+          for attempt in 1 2 3; do
+            if git pull --rebase origin main && git push origin main; then
+              exit 0
+            fi
+            echo "push race on attempt $attempt, retrying…"
+            sleep $((RANDOM % 5 + 2))
+          done
+          echo "could not push the deploy bump after 3 attempts" >&2
+          exit 1
