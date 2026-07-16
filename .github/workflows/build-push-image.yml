@@ -29,7 +29,7 @@ on:
         default: ""
         type: string
       npm-auth:
-        description: Whether to pass NPM_AUTH_TOKEN as a build secret (for private @barbu-game packages).
+        description: Whether to pass node_auth as a build secret (to install @barbu-game packages).
         required: false
         default: false
         type: boolean
@@ -63,4 +63,4 @@ jobs:
             ghcr.io/barbu-game/${{ inputs.image }}:${{ inputs.version }}
             ghcr.io/barbu-game/${{ inputs.image }}:latest
           build-args: ${{ inputs.build-args }}
-          secrets: ${{ inputs.npm-auth && format('node_auth={0}', secrets.PACKAGES_READ_TOKEN) || '' }}
+          secrets: ${{ inputs.npm-auth && format('node_auth={0}', secrets.GITHUB_TOKEN) || '' }}
